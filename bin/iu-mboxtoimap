@@ -4,8 +4,9 @@
 
 ######################################################################
 #  Program name   MboxtoIMAP.pl                                      #
-#  Written by     Rick Sanders                                       #
-#  Date           9 March 2008                                       #
+#  Written by     Rick Sanders  				     #
+#  Edited by      Varun Palekar					     #
+#  Date           9 March 2008, edit 5 OCT, 2015                     #
 #                                                                    #
 #  Description                                                       #
 #                                                                    #
@@ -22,23 +23,33 @@ use Socket;
 use FileHandle;
 use Fcntl;
 use Getopt::Std;
-use IO::Socket;
 use IMAP::Utils;
 
-    init();
-    @mailfiles = getMailfiles();
+#################################################################
+#            Main program.                                      #
+#################################################################
 
-    connectToHost($imapHost, \$dst);
-    login($imapUser,$imapPwd, $dst);
-    namespace( $dst, \$dstPrefix, \$dstDelim );
+   $dir = &init();
+
+   print "dest : $dst";
+   connectToHost($imapHost, \$dst);
+   login($imapUser,$imapPwd, $dst);
+   @mailfiles = getMailfiles();
+   print "\nConnected Successfull\n";
+   namespace( $dst, \$prefix, \$delim );
+   namespace($dst, \$prefix, \$delim );
+    print "range start";
 
     if ( $range ) {
       ($lower,$upper) = split(/-/, $range);
       Log("Migrating Mbox message numbers between $lower and $upper");
     }
 
+    print "\nRange complete\n";
+
     $msgs=$errors=0;
     foreach $mailfile ( @mailfiles ) {
+    	 print "\nEnter foreach\n";
        $owner = getOwner( "$mfdir/$mailfile" );
        if ( $mbxname and $mfile ) {
           $mbx = $mbxname;
@@ -46,7 +57,7 @@ use IMAP::Utils;
           @terms = split(/\//, $mailfile);
           $mbx = $terms[$#terms];
        }
-       $mbx = mailboxName( $mbx,$dstPrefix,$dstDelim );
+       $mbx = mailboxName( $mbx,$prefix,$delim );
 
        $mbxs++;
        Log("Copying to mbx $mbx");
@@ -129,16 +140,32 @@ use IMAP::Utils;
     Log("   Mailboxes  $mbxs");
     Log("   Total Msgs $added");
 
+   exit;
 
-    exit;
 
 
 sub init {
 
+   $os = $ENV{'OS'};
+
+   &processArgs;
+
+   $timeout = 60 if !$timeout;
+
+   IMAP::Utils::init();
+   #  Open the logFile
+   #
+
+   return ;
+}
+
+sub processArgs {
+
    if ( !getopts('m:L:i:dIr:RDf:n:p:') ) {
       usage();
-      exit;
    }
+
+   ($imapHost,$imapUser,$imapPwd) = split(/\//, $opt_i);
 
    $mfdir    = $opt_m;
    $mfile    = $opt_f;
@@ -151,22 +178,25 @@ sub init {
    $getdate = 1 if $opt_D;
    $removeCopiedMsgs = 1 if $opt_R;
 
-   ($imapHost,$imapUser,$imapPwd) = split(/\//, $opt_i);
-   IMAP::Utils::init();
-   if ( $logfile ) {
-	openLog($logfile);
-   }
-   Log("Starting");
+   &usage() if $opt_h;
 
-   #  Determine if the IMAP Utf7 module is installed.
+   return ;
 
-   eval 'use Unicode::IMAPUtf7';
-   if ( $@ ) {
-      # Module not installed
-      $utf7 = 0;   
-   } else {
-      $utf7 = 1;
-   }
+}
+
+sub usage {
+
+   print "Usage: iu-mboxtoimap\n";
+   print "    -m <location of mailfiles>\n";
+   print "    -f <file spec of individual mailfile>\n";
+   print "    -n <mailbox name> Used with -f <mailfile>\n";
+   print "    -i <server/username/password>\n";
+   print "    [-r <range of messages>]  eg 1-10 or 450-475\n";
+   print "    [-R remove copied messages from the mailfile]\n";
+   print "    [-p <root mbx> put all mailboxes under the root mbx\n";
+   print "    [-L <logfile>]\n";
+   print "    [-d debug]\n";
+   print "    [-I log IMAP protocol exchanges]\n";
 
 }
 
@@ -183,6 +213,7 @@ my @mailfiles;
    if ( $mfdir ) {
       opendir D, $mfdir;
       @filelist = readdir( D );
+      print "Files: @filelist";
       closedir D;
 
       foreach $fn ( @filelist ) {
@@ -205,24 +236,6 @@ my @mailfiles;
    return @mailfiles;
 }
 
-
-
-sub usage {
-
-   print "Usage: iu-mboxtoimap\n";
-   print "    -m <location of mailfiles>\n";
-   print "    -f <file spec of individual mailfile>\n";
-   print "    -n <mailbox name> Used with -f <mailfile>\n";
-   print "    -i <server/username/password>\n";
-   print "    [-r <range of messages>]  eg 1-10 or 450-475\n";
-   print "    [-R remove copied messages from the mailfile]\n";
-   print "    [-p <root mbx> put all mailboxes under the root mbx\n";
-   print "    [-L <logfile>]\n";
-   print "    [-d debug]\n";
-   print "    [-I log IMAP protocol exchanges]\n";
-
-}
-
 sub readMbox {
 
 my $file  = shift;
@@ -235,7 +248,8 @@ local $_;
     open(FH,"< $file") or die "Can't open $file";
 
     while(<FH>) {
-        s/$//;
+        s/
+$//;
         if($blank && /\AFrom .*\d{4}/) {
             push(@mail, $mail) if scalar(@{$mail});
             $mail = [ $_ ];
@@ -262,19 +276,41 @@ my $date  = shift;
 my $conn  = shift;
 my ($lsn,$lenx);
 
-   Log("   Inserting message") if $debug;
+
    $lenx = length($$message);
+   Log("   Inserting message") if $debug;
+   Log("message size $lenx bytes");
 
-   if ( $debug ) {
-      Log("$$message");
-   }
+   $date =~ s/\((.+)\)//;
+   $date =~ s/\s+$//g;
 
-   ++$lsn;
+   $totalBytes = $totalBytes + $lenx;
+   $totalMsgs++;
+
+   #  Create the mailbox unless we have already done so
+   if ($destMbxs{"$mbx"} eq '') {
+      createMbx( $mbx, $conn );
+   } 
+   $destMbxs{"$mbx"} = '1';
+
    $flags =~ s/\\Recent//i;
+   $flags =~ s/Unseen//i;
 
-   sendCommand ($conn, "$lsn APPEND \"$mbx\" () \"$date\" \{$lenx\}");
-   readResponse ($conn);
+   if ( $date ) {
+      sendCommand ($conn, "1 APPEND \"$mbx\" ($flags) \"$date\" \{$lenx\}");
+   } else {
+      sendCommand ($conn, "1 APPEND \"$mbx\" ($flags) \{$lenx\}");
+   }
+   
+   $response = readResponse ($conn);
+   if ($conn_timed_out) {
+       Log ("unexpected response timeout appending message");
+       push(@errors,"Error appending message to $mbx for $user");
+       return 0;
+   }
+	
    if ( $response !~ /^\+/ ) {
+       Log ("unexpected APPEND response: >$response<");
        # next;
        push(@errors,"Error appending message to $mbx for $user");
        return 0;
@@ -284,12 +320,12 @@ my ($lsn,$lenx);
 
    undef @response;
    while ( 1 ) {
-       readResponse ($conn);
-       if ( $response =~ /^$lsn OK/i ) {
+       $response = readResponse ($conn);
+       if ( $response =~ /^1 OK/i ) {
 	   last;
        }
        elsif ( $response !~ /^\*/ ) {
-	   Log ("unexpected APPEND response: $response");
+	   Log ("Unexpected APPEND response: >$response<");
 	   # next;
 	   return 0;
        }
@@ -393,7 +429,7 @@ my $delimiter = shift;
    @response = ();
    sendCommand( $conn, "1 NAMESPACE");
    while ( 1 ) {
-      readResponse( $conn );
+      $response = readResponse( $conn );
       if ( $response =~ /^1 OK/i ) {
          last;
       } elsif ( $response =~ /NO|BAD/i ) {
@@ -407,6 +443,7 @@ my $delimiter = shift;
          my $i = index( $_, '((' );
          my $j = index( $_, '))' );
          my $val = substr($_,$i+2,$j-$i-3);
+         ($val) = split(/\)/, $val);
          ($$prefix,$$delimiter) = split( / /, $val );
          $$prefix    =~ s/"//g;
          $$delimiter =~ s/"//g;
@@ -422,29 +459,30 @@ my $delimiter = shift;
 
 }
 
+
 sub mailboxName {
 
 my $mbx       = shift;
-my $dstPrefix = shift;
-my $dstDelim  = shift;
+my $prefix = shift;
+my $delim  = shift;
 my $dstmbx;
 
    #  Insert the IMAP server's prefix (if defined) and replace the Unix
    #  file delimiter with the server's delimiter (again if defined).
 
-   $dstmbx = "$dstPrefix$mbx";
-   $dstmbx =~ s#/#$dstDelim#g;
+   $dstmbx = "$prefix$mbx";
+   $dstmbx =~ s#/#$delim#g;
 
    if ( $root_mbx ) {
       #  Put folders under a 'root' folder on the dst
-      $dstmbx =~ s/^$dstPrefix//;
-      $dstDelim =~ s/\./\\./g;
-      $dstmbx =~ s/^$dstDelim//;
-      $dstmbx = $dstPrefix . $root_mbx . $dstDelim . $dstmbx;
+      $dstmbx =~ s/^$prefix//;
+      $delim =~ s/\./\\./g;
+      $dstmbx =~ s/^$delim//;
+      $dstmbx = $prefix . $root_mbx . $delim . $dstmbx;
       if ( uc($srcmbx) eq 'INBOX' ) {
          #  Special case for the INBOX
          $dstmbx =~ s/INBOX$//i;
-         $dstmbx =~ s/$dstDelim$//;
+         $dstmbx =~ s/$delim$//;
       }
       $dstmbx =~ s/\\//g;
    }
@@ -488,3 +526,4 @@ my $msg = shift;
 
    return $date;
 }
+

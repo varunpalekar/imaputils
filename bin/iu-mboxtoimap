@@ -1,6 +1,8 @@
 #!/usr/bin/perl
 
-# $Header: /mhub4/sources/imap-tools/MboxtoIMAP.pl,v 1.10 2012/03/20 16:47:00 rick Exp $
+eval 'exec /usr/bin/perl  -S $0 ${1+"$@"}'
+    if 0; # not running under some shell
+
 
 ######################################################################
 #  Program name   MboxtoIMAP.pl                                      #
@@ -31,25 +33,19 @@ use IMAP::Utils;
 
    $dir = &init();
 
-   print "dest : $dst";
    connectToHost($imapHost, \$dst);
    login($imapUser,$imapPwd, $dst);
    @mailfiles = getMailfiles();
    print "\nConnected Successfull\n";
    namespace( $dst, \$prefix, \$delim );
-   namespace($dst, \$prefix, \$delim );
-    print "range start";
 
     if ( $range ) {
       ($lower,$upper) = split(/-/, $range);
       Log("Migrating Mbox message numbers between $lower and $upper");
     }
 
-    print "\nRange complete\n";
-
     $msgs=$errors=0;
     foreach $mailfile ( @mailfiles ) {
-    	 print "\nEnter foreach\n";
        $owner = getOwner( "$mfdir/$mailfile" );
        if ( $mbxname and $mfile ) {
           $mbx = $mbxname;
